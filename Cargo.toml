@@ -8,4 +8,5 @@ edition = "2021"
 [dependencies]
 machineid-rs = "1.2.2"
 protocol = { version = "3.4.0", features=["derive"] }
+rand = "0.8.5"
 tokio = {version = "1.24.2", features=["full"] }
