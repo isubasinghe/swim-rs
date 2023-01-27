@@ -1,20 +1,30 @@
+mod cli;
 mod fdetector;
-use machineid_rs::{Encryption, IdBuilder};
-
-fn get_unique_identifier() -> Option<Vec<u8>> {
-    let mut builder = IdBuilder::new(Encryption::SHA1);
-    builder.add_component(machineid_rs::HWIDComponent::SystemID);
-
-    return match builder.build("id") {
-        Ok(v) => Some(v.as_bytes().to_vec()),
-        Err(_) => None,
-    };
-}
+use clap::Parser;
+use std::fs::read_to_string;
+use toml;
 
 fn main() {
-    let id = match get_unique_identifier() {
-        Some(id) => id,
-        None => return,
+    let args = cli::Args::parse();
+    println!("{}", args.peers);
+    println!("{}", args.id);
+    let contents = match read_to_string(&args.peers) {
+        Ok(contents) => contents,
+        Err(e) => {
+            println!("was unable to open {}", args.peers);
+            println!("error: {}", e);
+            return;
+        }
+    };
+    let config: fdetector::Config = match toml::from_str(&contents) {
+        Ok(peer_data) => peer_data,
+        Err(e) => {
+            println!("was unable to parse toml");
+            println!("error: {}", e);
+            return;
+        }
     };
 
+    let mut d = fdetector::SwimFailureDetector::new(args.id, config.peers, config.period, config.failure_group_sz);
+    d.run();
 }

@@ -1,0 +1,16 @@
+period=1000
+failure_group_sz=3
+
+[[peers]]
+id=1
+
+[peers.addr]
+port=8001
+host="localhost"
+
+[[peers]]
+id=2
+
+[peers.addr]
+port=8002
+host="localhost"
