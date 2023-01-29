@@ -4,7 +4,7 @@ use clap::Parser;
 #[command(author, version, about, long_about=None)]
 pub struct Args {
     #[arg(short, long)]
-    pub id: u64, 
+    pub id: u64,
     #[arg(short, long)]
-    pub peers: String
+    pub peers: String,
 }

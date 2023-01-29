@@ -1,20 +1,19 @@
+use futures::SinkExt;
 use rand::rngs::ThreadRng;
 use rand::Rng;
 use std::collections::HashMap;
 
+use bincode;
+use bytes::{Buf, BytesMut};
+use futures::{future::join_all, AsyncWriteExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use futures::{future::join_all, AsyncWriteExt};
+use std::io::{Error, ErrorKind};
 use std::net::{SocketAddr, ToSocketAddrs};
 use tokio::net::UdpSocket;
-use tokio_util::{udp::UdpFramed, codec::Decoder, codec::Encoder};
-use tracing::{info, error, warn};
-use std::io::{Error, ErrorKind};
-use bincode;
-use bytes::{BytesMut, Buf};
+use tokio_util::{codec::Decoder, codec::Encoder, udp::UdpFramed};
+use tracing::{error, info, warn};
 
 const DATAGRAM_MAX_SZ: usize = 65_507;
-
-
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Inquire {}
@@ -29,7 +28,7 @@ pub enum Packet {
 
 struct BinCodeCodec;
 
-impl Decoder for BinCodeCodec{
+impl Decoder for BinCodeCodec {
     type Item = Packet;
     type Error = std::io::Error;
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -44,11 +43,11 @@ impl Decoder for BinCodeCodec{
             src.reserve(4 + length - src.len());
             return Ok(None);
         }
-        let data = src[4..4+length].to_vec();
-        src.advance(4+length);
+        let data = src[4..4 + length].to_vec();
+        src.advance(4 + length);
 
         let packet: Packet = match bincode::deserialize(&data) {
-            Ok(packet) => packet, 
+            Ok(packet) => packet,
             Err(e) => {
                 return Err(Error::new(ErrorKind::Other, e));
             }
@@ -61,7 +60,7 @@ impl Encoder<Packet> for BinCodeCodec {
     type Error = Error;
     fn encode(&mut self, item: Packet, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let data = match bincode::serialize(&item) {
-            Ok(data) => data, 
+            Ok(data) => data,
             Err(e) => {
                 error!("error: {}", e);
                 return Err(Error::new(ErrorKind::Other, e));
@@ -69,7 +68,10 @@ impl Encoder<Packet> for BinCodeCodec {
         };
 
         if data.len() > DATAGRAM_MAX_SZ {
-            return Err( Error::new(ErrorKind::Other, "PACKET EXCEEDS UDP MAX DATAGRAM SIZE"));
+            return Err(Error::new(
+                ErrorKind::Other,
+                "PACKET EXCEEDS UDP MAX DATAGRAM SIZE",
+            ));
         }
         let len_slice = u32::to_le_bytes(data.len() as u32);
         dst.reserve(4 + data.len());
@@ -77,18 +79,16 @@ impl Encoder<Packet> for BinCodeCodec {
         dst.extend_from_slice(&len_slice);
         dst.extend_from_slice(&data);
         Ok(())
-        
     }
-    
 }
 
-pub type Id=u64;
+pub type Id = u64;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
     pub peers: Vec<Peer>,
-    pub period: u64, 
-    pub failure_group_sz: u64
+    pub period: u64,
+    pub failure_group_sz: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -99,34 +99,37 @@ pub struct Peer {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Addr {
-    pub port: u16, 
-    pub host: String
+    pub port: u16,
+    pub host: String,
 }
 impl Iterator for Addr {
     type Item = SocketAddr;
     fn next(&mut self) -> Option<Self::Item> {
-       None 
+        None
     }
 }
 
 impl ToSocketAddrs for Addr {
-    type Iter = Addr; 
+    type Iter = Addr;
     fn to_socket_addrs(&self) -> std::io::Result<Self::Iter> {
-       unimplemented!() 
+        unimplemented!()
     }
 }
 
 impl Clone for Addr {
     fn clone(&self) -> Self {
-        Self { port: self.port, host: self.host.to_owned() }
+        Self {
+            port: self.port,
+            host: self.host.to_owned(),
+        }
     }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PeerState {
-    Alive, 
-    Suspect, 
-    Dead
+    Alive,
+    Suspect,
+    Dead,
 }
 
 pub struct SwimFailureDetector {
@@ -139,9 +142,21 @@ pub struct SwimFailureDetector {
 }
 
 impl SwimFailureDetector {
-    pub fn new(id: Id, peers: Vec<Peer>, period: u64, failure_group_sz: u64) -> SwimFailureDetector {
+    pub fn new(
+        id: Id,
+        peers: Vec<Peer>,
+        period: u64,
+        failure_group_sz: u64,
+    ) -> SwimFailureDetector {
         let rng = rand::thread_rng();
-        SwimFailureDetector{id, peers, rng, period, failure_group_sz, peer_state: HashMap::new()} 
+        SwimFailureDetector {
+            id,
+            peers,
+            rng,
+            period,
+            failure_group_sz,
+            peer_state: HashMap::new(),
+        }
     }
 
     pub fn run_round(&mut self) {
@@ -158,9 +173,12 @@ impl SwimFailureDetector {
 
     pub fn add_node(&self, node_id: Vec<u8>, addr: Addr) {}
 
-    
     pub async fn connect(&self, peer: &Peer) -> PeerState {
-        let sock_addr = (peer.addr.host.to_owned() , peer.addr.port).to_socket_addrs().unwrap().next().unwrap();
+        let sock_addr = (peer.addr.host.to_owned(), peer.addr.port)
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap();
         todo!();
     }
 
@@ -173,26 +191,33 @@ impl SwimFailureDetector {
             }
         }
         let host = match host {
-            Some(host) => host, 
-            None => return Ok(())
+            Some(host) => host,
+            None => return Ok(()),
         };
         let sock_addr = host.to_socket_addrs().unwrap().next().unwrap();
         let ssock = UdpSocket::bind(sock_addr).await?;
-        let mut buf = [0; 4096*12];
-        loop {
-          let (usize, addr) = match ssock.recv_from(&mut buf).await {
-            Ok(d) => d, 
-            Err(e) => {
-                continue;
+
+        tokio::spawn(async move {
+            let mut bcodec = BinCodeCodec {};
+            let mut buf = [0; DATAGRAM_MAX_SZ];
+            loop {
+                let (usize, addr) = match ssock.recv_from(&mut buf).await {
+                    Ok(d) => d,
+                    Err(e) => {
+                        // TODO: mark addr as failed
+                        warn!("was not able to recv due to {}", e);
+                        continue;
+                    }
+                };
             }
-          };
-        }
+        });
+        Ok(())
     }
 
     pub async fn run(&mut self) {
         let mut futures = vec![];
 
-        self.bind().await;
+        self.bind();
         for peer in &self.peers {
             if peer.id == self.id {
                 continue;
@@ -203,6 +228,5 @@ impl SwimFailureDetector {
         }
 
         let states = join_all(futures).await;
-
     }
 }

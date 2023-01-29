@@ -1,5 +1,6 @@
 #![feature(async_closure)]
 mod cli;
+mod codec;
 mod fdetector;
 use clap::Parser;
 use std::fs::read_to_string;
