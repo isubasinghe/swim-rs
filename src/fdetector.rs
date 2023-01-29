@@ -3,11 +3,16 @@ use rand::Rng;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use futures::future::join_all;
+use futures::{future::join_all, AsyncWriteExt};
 use std::net::{SocketAddr, ToSocketAddrs};
 use tokio::net::UdpSocket;
-use tokio_util::udp::UdpFramed;
+use tokio_util::{udp::UdpFramed, codec::Decoder, codec::Encoder};
+use tracing::{info, error, warn};
+use std::io::{Error, ErrorKind};
 use bincode;
+use bytes::{BytesMut, Buf};
+
+const DATAGRAM_MAX_SZ: usize = 65_507;
 
 
 
@@ -20,6 +25,61 @@ pub enum Packet {
     Ack(),
     AckRequire(),
     InformJoin(),
+}
+
+struct BinCodeCodec;
+
+impl Decoder for BinCodeCodec{
+    type Item = Packet;
+    type Error = std::io::Error;
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if src.len() < 4 {
+            return Ok(None);
+        }
+
+        let mut length_bytes = [0u8; 4];
+        length_bytes.copy_from_slice(&src[..4]);
+        let length = u32::from_le_bytes(length_bytes) as usize;
+        if src.len() < 4 + length {
+            src.reserve(4 + length - src.len());
+            return Ok(None);
+        }
+        let data = src[4..4+length].to_vec();
+        src.advance(4+length);
+
+        let packet: Packet = match bincode::deserialize(&data) {
+            Ok(packet) => packet, 
+            Err(e) => {
+                return Err(Error::new(ErrorKind::Other, e));
+            }
+        };
+        Ok(Some(packet))
+    }
+}
+
+impl Encoder<Packet> for BinCodeCodec {
+    type Error = Error;
+    fn encode(&mut self, item: Packet, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let data = match bincode::serialize(&item) {
+            Ok(data) => data, 
+            Err(e) => {
+                error!("error: {}", e);
+                return Err(Error::new(ErrorKind::Other, e));
+            }
+        };
+
+        if data.len() > DATAGRAM_MAX_SZ {
+            return Err( Error::new(ErrorKind::Other, "PACKET EXCEEDS UDP MAX DATAGRAM SIZE"));
+        }
+        let len_slice = u32::to_le_bytes(data.len() as u32);
+        dst.reserve(4 + data.len());
+
+        dst.extend_from_slice(&len_slice);
+        dst.extend_from_slice(&data);
+        Ok(())
+        
+    }
+    
 }
 
 pub type Id=u64;

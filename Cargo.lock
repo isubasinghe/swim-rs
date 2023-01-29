@@ -593,6 +593,7 @@ name = "swim-rs"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "bytes",
  "clap",
  "futures",
  "rand",
