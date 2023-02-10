@@ -48,6 +48,10 @@ fn main() {
     };
     let mut d = fdetector::SwimFailureDetector::new(
         args.id,
+        fdetector::Addr {
+            port: 8080,
+            host: "".to_string(),
+        },
         config.peers,
         config.period,
         config.failure_group_sz,

@@ -1,5 +1,1 @@
-
-
-pub trait Codec {
-
-}
+pub trait Codec {}

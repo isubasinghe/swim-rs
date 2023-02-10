@@ -8,10 +8,10 @@ use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::io::{Error, ErrorKind};
 use std::net::{SocketAddr, ToSocketAddrs};
-use tokio::net::UdpSocket;
-use tracing::{error, info, warn};
 use std::time::Duration;
+use tokio::net::UdpSocket;
 use tokio::time;
+use tracing::{error, info, warn};
 
 const DATAGRAM_MAX_SZ: usize = 65_507;
 
@@ -25,7 +25,6 @@ pub enum Packet {
     AckRequire(Addr),
     InformJoin(Addr),
 }
-
 
 fn decode(src: &mut BytesMut) -> Result<Option<Packet>, std::io::Error> {
     if src.len() < 4 {
@@ -50,7 +49,6 @@ fn decode(src: &mut BytesMut) -> Result<Option<Packet>, std::io::Error> {
     };
     Ok(Some(packet))
 }
-
 
 fn encode(item: Packet, dst: &mut BytesMut) -> Result<(), std::io::Error> {
     let data = match bincode::serialize(&item) {
@@ -124,7 +122,7 @@ pub enum PeerState {
 
 pub struct SwimFailureDetector {
     id: Id,
-    addr: Addr, 
+    addr: Addr,
     peers: Vec<Peer>,
     rng: ThreadRng,
     period: u64,
@@ -135,7 +133,7 @@ pub struct SwimFailureDetector {
 impl SwimFailureDetector {
     pub fn new(
         id: Id,
-        addr: Addr, 
+        addr: Addr,
         peers: Vec<Peer>,
         period: u64,
         failure_group_sz: u64,
@@ -152,19 +150,6 @@ impl SwimFailureDetector {
         }
     }
 
-    pub fn run_round(&mut self) {
-        if self.peers.len() < 1 {
-            return;
-        }
-
-        let index = self.rng.gen_range(0..self.peers.len());
-
-        for _ in 0..self.failure_group_sz {
-            let index = self.rng.gen_range(0..self.peers.len());
-        }
-    }
-
-
     pub async fn connect(&self, peer: &Peer) -> (SocketAddr, PeerState) {
         let sock_addr = (peer.addr.host.to_owned(), peer.addr.port)
             .to_socket_addrs()
@@ -172,7 +157,7 @@ impl SwimFailureDetector {
             .next()
             .unwrap();
         let sock = match UdpSocket::bind("0.0.0.0:0").await {
-            Ok(sock) => sock, 
+            Ok(sock) => sock,
             Err(e) => {
                 warn!("was unable to bind due to {}", e);
                 return (sock_addr, PeerState::Dead);
@@ -201,8 +186,9 @@ impl SwimFailureDetector {
 
         tokio::spawn(async move {
             let mut buf = [0; DATAGRAM_MAX_SZ];
+            let mut recv_buffers: HashMap<SocketAddr, BytesMut> = HashMap::new();
             loop {
-                let (usize, addr) = match ssock.recv_from(&mut buf).await {
+                let (_, addr) = match ssock.recv_from(&mut buf).await {
                     Ok(d) => d,
                     Err(e) => {
                         // TODO: mark addr as failed
@@ -210,37 +196,68 @@ impl SwimFailureDetector {
                         continue;
                     }
                 };
+                let bytes = recv_buffers.entry(addr).or_insert(BytesMut::new());
+                bytes.extend_from_slice(&buf);
+                let packet = decode(bytes);
+                if let Err(e) = packet {
+                    warn!("got an error {}", e);
+                    warn!("resetting buffer");
+                    bytes.clear();
+                    continue;
+                };
+                let packet = packet.unwrap();
+                if packet.is_none() {
+                    continue;
+                }
+                let packet = packet.unwrap();
+                match packet {
+                    Packet::Ping(_a) => {}
+                    Packet::Ack(_a) => {}
+                    Packet::AckRequire(_a) => {}
+                    Packet::InformJoin(_a) => {}
+                };
             }
         });
         Ok(())
     }
-    
+
     pub async fn run_server(&mut self) {
         let mut interval = time::interval(Duration::from_millis(self.period));
+        let sock = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let sock = std::rc::Rc::new(sock);
         loop {
             interval.tick().await;
-            
-            for _ in (0..self.failure_group_sz) {
+            let mut futs = vec![];
+
+            for _ in 0..self.failure_group_sz {
                 let i = self.rng.gen_range(0..self.peers.len());
                 let p = &self.peers[i];
                 let (addr, state) = match self.peer_state.get(p) {
-                    Some(d) => d, 
-                    None => continue
+                    Some(d) => d,
+                    None => continue,
                 };
-
                 let mut bytes = BytesMut::new();
-                
+                let packet = Packet::Ping(self.addr.clone());
+                match encode(packet, &mut bytes) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        warn!("was unable to encode data due to {}", e);
+                        continue;
+                    }
+                };
+                let sock = sock.clone();
+                futs.push(async move { sock.send_to(&bytes, addr).await });
             }
+            let results = join_all(futs).await;
         }
     }
-
 
     pub async fn run(&mut self) {
         info!("starting swim server");
         let mut futures = vec![];
 
         if let Err(e) = self.bind().await {
-            error!("Was not able to join due to {}", e); 
+            error!("Was not able to join due to {}", e);
             return;
         }
 
@@ -255,7 +272,7 @@ impl SwimFailureDetector {
         let states = join_all(futures).await;
 
         for (i, peer) in self.peers.iter().enumerate() {
-           self.peer_state.insert(peer.clone(), states[i]); 
+            self.peer_state.insert(peer.clone(), states[i]);
         }
 
         self.run_server().await;
