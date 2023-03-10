@@ -1,13 +1,13 @@
-use rand::rngs::ThreadRng;
-use rand::Rng;
-use std::collections::HashMap;
-
 use bincode;
 use bytes::{Buf, BytesMut};
 use futures::future::join_all;
+use rand::rngs::ThreadRng;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time;
@@ -113,21 +113,33 @@ impl Clone for Addr {
     }
 }
 
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+pub enum AliveState {
+    Normal,
+    WaitingResponse,
+}
+
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+pub enum SuspectState {
+    Normal,
+    WaitingResponse,
+}
+
 #[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 pub enum PeerState {
-    Alive,
-    Suspect,
+    Alive(AliveState),
+    Suspect(SuspectState),
     Dead,
 }
 
 pub struct SwimFailureDetector {
     id: Id,
     addr: Addr,
-    peers: Vec<Peer>,
-    rng: ThreadRng,
+    peers: RwLock<Vec<Peer>>,
+    rng: Mutex<ThreadRng>,
     period: u64,
     failure_group_sz: u64,
-    peer_state: HashMap<Peer, (SocketAddr, PeerState)>,
+    peer_state: RwLock<HashMap<Peer, (SocketAddr, PeerState)>>,
 }
 
 impl SwimFailureDetector {
@@ -142,15 +154,15 @@ impl SwimFailureDetector {
         SwimFailureDetector {
             id,
             addr,
-            peers,
-            rng,
+            peers: RwLock::new(peers),
+            rng: Mutex::new(rng),
             period,
             failure_group_sz,
-            peer_state: HashMap::new(),
+            peer_state: RwLock::new(HashMap::new()),
         }
     }
 
-    pub async fn connect(&self, peer: &Peer) -> (SocketAddr, PeerState) {
+    pub async fn connect(&self, peer: Peer) -> (SocketAddr, PeerState) {
         let sock_addr = (peer.addr.host.to_owned(), peer.addr.port)
             .to_socket_addrs()
             .unwrap()
@@ -176,10 +188,10 @@ impl SwimFailureDetector {
             error!("was not able to send due to {}", e);
             return (sock_addr, PeerState::Dead);
         }
-        (sock_addr, PeerState::Alive)
+        (sock_addr, PeerState::Alive(AliveState::Normal))
     }
 
-    pub async fn bind(&self) -> std::io::Result<()> {
+    pub async fn bind(self: Arc<Self>) -> std::io::Result<()> {
         let sock_addr = self.addr.to_socket_addrs().unwrap().next().unwrap();
         info!("Starting server on {}", sock_addr);
         let ssock = UdpSocket::bind(sock_addr).await?;
@@ -221,7 +233,7 @@ impl SwimFailureDetector {
         Ok(())
     }
 
-    pub async fn run_server(&mut self) {
+    pub async fn run_server(self: Arc<Self>) {
         let mut interval = time::interval(Duration::from_millis(self.period));
         let sock = UdpSocket::bind("0.0.0.0:0").await.unwrap();
         let sock = std::rc::Rc::new(sock);
@@ -230,9 +242,11 @@ impl SwimFailureDetector {
             let mut futs = vec![];
 
             for _ in 0..self.failure_group_sz {
-                let i = self.rng.gen_range(0..self.peers.len());
-                let p = &self.peers[i];
-                let (addr, state) = match self.peer_state.get(p) {
+                let peer_state = self.peer_state.read().unwrap();
+                let peers = self.peers.read().unwrap();
+                let i = self.rng.lock().unwrap().gen_range(0..peers.len());
+                let p = &peers[i];
+                let (addr, state) = match peer_state.get(p) {
                     Some(d) => d,
                     None => continue,
                 };
@@ -246,35 +260,40 @@ impl SwimFailureDetector {
                     }
                 };
                 let sock = sock.clone();
-                futs.push(async move { sock.send_to(&bytes, addr).await });
+                let maddr = *addr;
+                futs.push(async move { sock.send_to(&bytes, &maddr).await });
             }
             let results = join_all(futs).await;
         }
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(self: Arc<Self>) {
         info!("starting swim server");
         let mut futures = vec![];
 
-        if let Err(e) = self.bind().await {
+        if let Err(e) = self.clone().bind().await {
             error!("Was not able to join due to {}", e);
             return;
         }
 
-        for peer in &self.peers {
+        let mut peer_state = self.peer_state.write().unwrap();
+        let peers = self.peers.read().unwrap();
+
+        for peer in peers.iter() {
             if peer.id == self.id {
                 continue;
             }
-            let future = self.connect(peer);
+            let mpeer = peer.clone();
+            let future = self.connect(mpeer);
             futures.push(future);
         }
 
         let states = join_all(futures).await;
 
-        for (i, peer) in self.peers.iter().enumerate() {
-            self.peer_state.insert(peer.clone(), states[i]);
+        for (i, peer) in peers.iter().enumerate() {
+            peer_state.insert(peer.clone(), states[i]);
         }
 
-        self.run_server().await;
+        self.clone().run_server().await;
     }
 }
