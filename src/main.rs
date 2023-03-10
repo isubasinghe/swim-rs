@@ -7,6 +7,7 @@ use tokio;
 use toml;
 use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
+use std::sync::Arc;
 
 fn main() {
     // a builder for `FmtSubscriber`.
@@ -46,7 +47,7 @@ fn main() {
             return;
         }
     };
-    let mut d = fdetector::SwimFailureDetector::new(
+    let d = fdetector::SwimFailureDetector::new(
         args.id,
         fdetector::Addr {
             port: 8080,
@@ -56,6 +57,7 @@ fn main() {
         config.period,
         config.failure_group_sz,
     );
+    let d = Arc::new(d);
     let ft = d.run();
     rt.block_on(ft);
 }
