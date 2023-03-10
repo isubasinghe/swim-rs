@@ -246,7 +246,7 @@ impl SwimFailureDetector {
                 let peers = self.peers.read().unwrap();
                 let i = self.rng.lock().unwrap().gen_range(0..peers.len());
                 let p = &peers[i];
-                let (addr, state) = match peer_state.get(p) {
+                let (addr, _state) = match peer_state.get(p) {
                     Some(d) => d,
                     None => continue,
                 };
@@ -263,7 +263,7 @@ impl SwimFailureDetector {
                 let maddr = *addr;
                 futs.push(async move { sock.send_to(&bytes, &maddr).await });
             }
-            let results = join_all(futs).await;
+            let _results = join_all(futs).await;
         }
     }
 

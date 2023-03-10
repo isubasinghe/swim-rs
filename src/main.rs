@@ -3,11 +3,11 @@ mod codec;
 mod fdetector;
 use clap::Parser;
 use std::fs::read_to_string;
+use std::sync::Arc;
 use tokio;
 use toml;
 use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
-use std::sync::Arc;
 
 fn main() {
     // a builder for `FmtSubscriber`.
