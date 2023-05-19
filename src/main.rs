@@ -4,6 +4,7 @@ mod fdetector;
 use clap::Parser;
 use std::fs::read_to_string;
 use std::sync::Arc;
+use std::net::{SocketAddrV4, Ipv4Addr, SocketAddr};
 use tokio;
 use toml;
 use tracing::{error, info, Level};
@@ -39,6 +40,8 @@ fn main() {
         }
     };
 
+    println!("{:#?}", config);
+
     let rt = match tokio::runtime::Builder::new_current_thread().build() {
         Ok(rt) => rt,
         Err(e) => {
@@ -49,10 +52,7 @@ fn main() {
     };
     let d = fdetector::SwimFailureDetector::new(
         args.id,
-        fdetector::Addr {
-            port: 8080,
-            host: "".to_string(),
-        },
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127,0,0,1), 8080)),
         config.peers,
         config.period,
         config.failure_group_sz,

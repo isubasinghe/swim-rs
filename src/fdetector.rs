@@ -6,7 +6,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -20,10 +20,10 @@ pub struct Inquire {}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Packet {
-    Ping(Addr),
-    Ack(Addr),
-    AckRequire(Addr),
-    InformJoin(Addr),
+    Ping(SocketAddr),
+    Ack(SocketAddr),
+    AckRequire(SocketAddr),
+    InformJoin(SocketAddr),
 }
 
 fn decode(src: &mut BytesMut) -> Result<Option<Packet>, std::io::Error> {
@@ -82,36 +82,10 @@ pub struct Config {
 #[derive(Serialize, Deserialize, Debug, Eq, Hash, PartialEq, Clone)]
 pub struct Peer {
     id: Id,
-    addr: Addr,
+    addr: SocketAddr,
 }
 
-#[derive(Serialize, Deserialize, Eq, PartialEq, Hash, Debug)]
-pub struct Addr {
-    pub port: u16,
-    pub host: String,
-}
-impl Iterator for Addr {
-    type Item = SocketAddr;
-    fn next(&mut self) -> Option<Self::Item> {
-        None
-    }
-}
 
-impl ToSocketAddrs for Addr {
-    type Iter = Addr;
-    fn to_socket_addrs(&self) -> std::io::Result<Self::Iter> {
-        unimplemented!()
-    }
-}
-
-impl Clone for Addr {
-    fn clone(&self) -> Self {
-        Self {
-            port: self.port,
-            host: self.host.to_owned(),
-        }
-    }
-}
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
 pub enum AliveState {
@@ -134,7 +108,7 @@ pub enum PeerState {
 
 pub struct SwimFailureDetector {
     id: Id,
-    addr: Addr,
+    addr: SocketAddr,
     peers: RwLock<Vec<Peer>>,
     rng: Mutex<ThreadRng>,
     period: u64,
@@ -145,7 +119,7 @@ pub struct SwimFailureDetector {
 impl SwimFailureDetector {
     pub fn new(
         id: Id,
-        addr: Addr,
+        addr: SocketAddr,
         peers: Vec<Peer>,
         period: u64,
         failure_group_sz: u64,
@@ -163,11 +137,7 @@ impl SwimFailureDetector {
     }
 
     pub async fn connect(&self, peer: Peer) -> (SocketAddr, PeerState) {
-        let sock_addr = (peer.addr.host.to_owned(), peer.addr.port)
-            .to_socket_addrs()
-            .unwrap()
-            .next()
-            .unwrap();
+        let sock_addr = peer.addr; 
         let sock = match UdpSocket::bind("0.0.0.0:0").await {
             Ok(sock) => sock,
             Err(e) => {
@@ -192,7 +162,8 @@ impl SwimFailureDetector {
     }
 
     pub async fn bind(self: Arc<Self>) -> std::io::Result<()> {
-        let sock_addr = self.addr.to_socket_addrs().unwrap().next().unwrap();
+        println!("{:?}", self.addr);
+        let mut sock_addr: SocketAddr = todo!();
         info!("Starting server on {}", sock_addr);
         let ssock = UdpSocket::bind(sock_addr).await?;
 
